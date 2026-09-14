@@ -54,24 +54,29 @@ def generate_evaluation_summary():
             "F1_Score": f"{m.get('f1_score', 0.0) * 100:.1f}%",
         })
 
-    # 2. Algo 2 Global (T = 0.039178)
-    t2_global = 0.039178
+    # 2. Algo 2 Global (2-Feature: Energy & Spectral Centroid)
+    from src.features.spectral import compute_energy_and_spectral_centroid
+    t1_global = 0.011927
+    t2_global = 32.35
+    seg_h_glob = HistogramSegmenter(weight_energy=5.0, weight_centroid=2.0, expand_frames=3)
+    seg_h_glob.threshold_energy = t1_global
+    seg_h_glob.threshold_centroid = t2_global
+
     for f in files:
         stem = os.path.splitext(os.path.basename(f))[0]
         sig, sr = load_audio(f)
         lab = load_ground_truth(parse_lab_file(f.replace(".wav", ".lab")))
         snr = compute_snr_db(sig, sr, parse_lab_file(f.replace(".wav", ".lab")))
-        fv, fc = compute_short_time_feature(sig, sr, feature_type=FeatureType.MA)
-        smoothed = median_filter_1d(fv, kernel_size=5)
-        segs = remove_short_silence(frames_to_segments(classify_frames(smoothed, t2_global), fc, len(sig) / sr))
+        E, C, fc = compute_energy_and_spectral_centroid(sig, sr)
+        segs = seg_h_glob.segment(E, fc, len(sig) / sr, centroid_vals=C)
         m = evaluate_boundaries(segs, lab)
         rows.append({
             "File": stem,
             "Kenh": "Dien thoai" if "phone" in stem else "Phong thu",
             "SNR_dB": round(snr, 1),
-            "ThuatToan": "Giannakopoulos 2014 (Histogram)",
+            "ThuatToan": "Giannakopoulos 2014 (Histogram 2-Feature)",
             "CheDo": "Global",
-            "Nguong_T": round(t2_global, 6),
+            "Nguong_T": f"E={t1_global:.5f}, C={t2_global:.1f}",
             "MAE_ms": round(m.get("mae_ms", float("nan")), 1),
             "RMSE_ms": round(m.get("rmse_ms", float("nan")), 1),
             "Precision": f"{m.get('precision', 0.0) * 100:.1f}%",
@@ -79,24 +84,23 @@ def generate_evaluation_summary():
             "F1_Score": f"{m.get('f1_score', 0.0) * 100:.1f}%",
         })
 
-    # 3. Algo 2 Dynamic (Adaptive Histogram)
-    seg_h = HistogramSegmenter()
+    # 3. Algo 2 Dynamic (Adaptive 2-Feature Histogram)
     for f in files:
         stem = os.path.splitext(os.path.basename(f))[0]
         sig, sr = load_audio(f)
         lab = load_ground_truth(parse_lab_file(f.replace(".wav", ".lab")))
         snr = compute_snr_db(sig, sr, parse_lab_file(f.replace(".wav", ".lab")))
-        fv, fc = compute_short_time_feature(sig, sr, feature_type=FeatureType.MA)
-        smoothed = median_filter_1d(fv, kernel_size=5)
-        t_dyn, segs = seg_h.fit_and_segment_dynamic(smoothed, fc, len(sig) / sr)
+        E, C, fc = compute_energy_and_spectral_centroid(sig, sr)
+        seg_h_dyn = HistogramSegmenter(weight_energy=5.0, weight_centroid=2.0, expand_frames=3)
+        t1_d, t2_d, segs = seg_h_dyn.fit_and_segment_dynamic(E, C, fc, len(sig) / sr)
         m = evaluate_boundaries(segs, lab)
         rows.append({
             "File": stem,
             "Kenh": "Dien thoai" if "phone" in stem else "Phong thu",
             "SNR_dB": round(snr, 1),
-            "ThuatToan": "Giannakopoulos 2014 (Histogram)",
+            "ThuatToan": "Giannakopoulos 2014 (Histogram 2-Feature)",
             "CheDo": "Dynamic",
-            "Nguong_T": round(t_dyn, 6),
+            "Nguong_T": f"E={t1_d:.5f}, C={t2_d:.1f}",
             "MAE_ms": round(m.get("mae_ms", float("nan")), 1),
             "RMSE_ms": round(m.get("rmse_ms", float("nan")), 1),
             "Precision": f"{m.get('precision', 0.0) * 100:.1f}%",

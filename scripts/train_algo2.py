@@ -1,11 +1,15 @@
 """
-scripts/train_algo2.py – Kịch bản huấn luyện & khảo sát Thuật toán 2 (Giannakopoulos 2014 - Histogram).
+scripts/train_algo2.py – Kịch bản huấn luyện & khảo sát Thuật toán 2 (Giannakopoulos 2014).
+Chuẩn 100% bài báo gốc: 2 đặc trưng (Short-Term Energy & Spectral Centroid).
+
 Thực hiện:
 1. Đọc và phân tích 4 file tín hiệu trong TinHieuHuanLuyen.
-2. Rút trích hàm độ lớn ngắn hạn (MA) và lọc trung vị (Median Filter 1D).
-3. Phân tích Histogram để xác định 2 cực đại địa phương: Đỉnh khoảng lặng M1 và đỉnh tiếng nói M2.
-4. Tính toán ngưỡng phân tách có trọng số: T = (Weight * V1 + V2) / (Weight + 1).
-5. Đánh giá sai số MAE, RMSE (đơn vị ms) và F1-Score so với Ground Truth .lab.
+2. Rút trích đồng thời Năng lượng ngắn hạn E(i) và Trọng tâm phổ C(i) (qua DFT trên NumPy thuần).
+3. Phân tích 2 Histogram độc lập: Tìm các cực đại địa phương M1 (khoảng lặng) và M2 (tiếng nói).
+4. Tính toán 2 ngưỡng tối ưu có trọng số:
+   T1 = (W_E * M1_E + M2_E) / (W_E + 1)
+   T2 = (W_C * M1_C + M2_C) / (W_C + 1)
+5. Đánh giá sai số MAE, RMSE (đơn vị ms), Precision, Recall và F1-Score so với Ground Truth .lab.
 6. Lưu kết quả ra output/histogram_threshold.json và xuất biểu đồ vào output/figures/.
 """
 
@@ -36,30 +40,28 @@ from src.audio import (
 )
 from src.config import (
     FIGURES_DIR, FRAME_LENGTH_MS, FRAME_SHIFT_MS,
-    MIN_SILENCE_DURATION_MS, OUTPUT_DIR, TRAINING_DIR, FeatureType,
+    MIN_SILENCE_DURATION_MS, OUTPUT_DIR, TRAINING_DIR,
 )
-from src.features import compute_short_time_feature
+from src.features import compute_energy_and_spectral_centroid
 from src.algorithms.histogram import (
-    compute_histogram_threshold, median_filter_1d,
+    HistogramSegmenter, compute_feature_histogram_threshold,
 )
-from src.segmentation import (
-    classify_frames, evaluate_boundaries, frames_to_segments,
-    remove_short_silence,
-)
+from src.segmentation import evaluate_boundaries
 from src.visualization import (
-    plot_histogram_analysis, plot_single_file_result,
+    plot_dual_histogram_analysis, plot_single_file_result,
 )
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 logger = logging.getLogger("train_algo2")
 
-HIST_FEATURE_TYPE = FeatureType.MA
 DEFAULT_NUM_BINS = 60
-DEFAULT_WEIGHT = 4.0
+DEFAULT_WEIGHT_ENERGY = 5.0
+DEFAULT_WEIGHT_CENTROID = 2.0
+EXPAND_FRAMES = 3
 
 
 def run_training_algorithm2():
-    """Hàm chính điều phối quy trình huấn luyện Thuật toán 2 (Histogram)."""
+    """Hàm chính điều phối quy trình huấn luyện Thuật toán 2 (Giannakopoulos 2014)."""
     os.makedirs(OUTPUT_DIR, exist_ok=True)
     os.makedirs(FIGURES_DIR, exist_ok=True)
 
@@ -70,14 +72,15 @@ def run_training_algorithm2():
         logger.error("Không tìm thấy file .wav nào trong: %s", TRAINING_DIR)
         return
 
-    logger.info("=" * 80)
-    logger.info("HUẤN LUYỆN THUẬT TOÁN 2: GIANNAKOPOULOS 2014 (HISTOGRAM-BASED)")
-    logger.info("Đặc trưng: %s | Lọc trung vị: K=5 | Trọng số: W=%.1f | Bins: %d | Lọc silence: >= %d ms",
-                HIST_FEATURE_TYPE.value, DEFAULT_WEIGHT, DEFAULT_NUM_BINS, int(MIN_SILENCE_DURATION_MS))
-    logger.info("=" * 80)
+    logger.info("=" * 85)
+    logger.info("HUẤN LUYỆN THUẬT TOÁN 2: GIANNAKOPOULOS 2014 (ENERGY & SPECTRAL CENTROID)")
+    logger.info("Đặc trưng: Energy E & Spectral Centroid C (DFT) | Bins: %d | W_E: %.1f | W_C: %.1f | Lọc silence: >= %d ms",
+                DEFAULT_NUM_BINS, DEFAULT_WEIGHT_ENERGY, DEFAULT_WEIGHT_CENTROID, int(MIN_SILENCE_DURATION_MS))
+    logger.info("=" * 85)
 
     file_data_list: List[Dict[str, Any]] = []
-    all_smoothed_features: List[np.ndarray] = []
+    all_energy: List[np.ndarray] = []
+    all_centroid: List[np.ndarray] = []
 
     # 1. Quét và tính đặc trưng trên từng file
     for wav_f in wav_files:
@@ -92,29 +95,36 @@ def run_training_algorithm2():
         gt_segments = load_ground_truth(lab_segs)
         snr_val = compute_snr_db(signal, sr, lab_segs)
 
-        feat_vals, frame_centers = compute_short_time_feature(
+        energy_vals, centroid_vals, frame_centers = compute_energy_and_spectral_centroid(
             signal=signal,
             sample_rate=sr,
             frame_length_ms=FRAME_LENGTH_MS,
             frame_shift_ms=FRAME_SHIFT_MS,
-            feature_type=HIST_FEATURE_TYPE,
+            use_hamming=True,
         )
 
-        # Lọc trung vị làm mịn
-        smoothed_feat = median_filter_1d(feat_vals, kernel_size=5)
-        all_smoothed_features.append(smoothed_feat)
+        all_energy.append(energy_vals)
+        all_centroid.append(centroid_vals)
 
-        # Tìm ngưỡng riêng theo histogram của file này
-        per_file_threshold, hist_info = compute_histogram_threshold(
-            feature_vals=smoothed_feat,
+        # Khởi tạo segmenter để tìm ngưỡng động cho riêng file này
+        seg_file = HistogramSegmenter(
             num_bins=DEFAULT_NUM_BINS,
-            weight=DEFAULT_WEIGHT,
+            weight_energy=DEFAULT_WEIGHT_ENERGY,
+            weight_centroid=DEFAULT_WEIGHT_CENTROID,
+            expand_frames=EXPAND_FRAMES,
+            min_silence_duration_ms=MIN_SILENCE_DURATION_MS,
         )
+        t_e_dyn, t_c_dyn, dyn_segs = seg_file.fit_and_segment_dynamic(
+            energy_vals=energy_vals,
+            centroid_vals=centroid_vals,
+            frame_centers=frame_centers,
+            signal_duration_s=len(signal) / sr,
+        )
+        dyn_metrics = evaluate_boundaries(dyn_segs, gt_segments)
 
-        n_peaks = len(hist_info.get("peaks", []))
         logger.info(
-            "File: %-12s | SNR: %5.1f dB | Khung: %4d | Số đỉnh phát hiện: %2d | Ngưỡng riêng T: %8.5f",
-            stem, snr_val, len(feat_vals), n_peaks, per_file_threshold,
+            "File: %-12s | SNR: %5.1f dB | Khung: %4d | T1_Energy: %8.6f | T2_Centroid: %5.1f | F1: %5.1f%%",
+            stem, snr_val, len(energy_vals), t_e_dyn, t_c_dyn, dyn_metrics.get("f1_score", 0.0) * 100,
         )
 
         file_data_list.append({
@@ -124,127 +134,124 @@ def run_training_algorithm2():
             "duration_s": len(signal) / sr,
             "gt_segments": gt_segments,
             "snr_db": snr_val,
-            "feat_vals": feat_vals,
-            "smoothed_feat": smoothed_feat,
+            "energy_vals": energy_vals,
+            "centroid_vals": centroid_vals,
             "frame_centers": frame_centers,
-            "per_file_threshold": per_file_threshold,
-            "hist_info": hist_info,
+            "t_e_dyn": t_e_dyn,
+            "t_c_dyn": t_c_dyn,
+            "dyn_metrics": dyn_metrics,
+            "dyn_segs": dyn_segs,
+            "hist_info_energy": seg_file.energy_hist_info,
+            "hist_info_centroid": seg_file.centroid_hist_info,
         })
 
-    # 2. Tìm ngưỡng dùng chung gộp (Global Histogram Threshold)
-    pooled_smoothed = np.concatenate(all_smoothed_features)
-    global_threshold, global_hist_info = compute_histogram_threshold(
-        feature_vals=pooled_smoothed,
+    # 2. Tìm ngưỡng dùng chung gộp (Global Histogram Thresholds)
+    pooled_energy = np.concatenate(all_energy)
+    pooled_centroid = np.concatenate(all_centroid)
+
+    global_t1, global_hist_e = compute_feature_histogram_threshold(
+        feature_vals=pooled_energy,
         num_bins=DEFAULT_NUM_BINS,
-        weight=DEFAULT_WEIGHT,
+        weight=DEFAULT_WEIGHT_ENERGY,
+    )
+    global_t2, global_hist_c = compute_feature_histogram_threshold(
+        feature_vals=pooled_centroid,
+        num_bins=DEFAULT_NUM_BINS,
+        weight=DEFAULT_WEIGHT_CENTROID,
     )
 
-    logger.info("-" * 80)
-    logger.info(">>> NGƯỠNG DÙNG CHUNG HISTOGRAM T_global = %.5f (Số đỉnh: %d) <<<",
-                global_threshold, len(global_hist_info.get("peaks", [])))
-    if global_hist_info.get("v1") and global_hist_info.get("v2"):
-        logger.info("  Đỉnh M1 (Khoảng lặng) = %.5f | Đỉnh M2 (Tiếng nói) = %.5f | Trọng số W = %.1f",
-                    global_hist_info["v1"], global_hist_info["v2"], DEFAULT_WEIGHT)
-    logger.info("-" * 80)
+    logger.info("-" * 85)
+    logger.info(">>> NGƯỠNG DÙNG CHUNG TOÀN CỤC: T1_Energy = %.6f | T2_Centroid = %.2f <<<", global_t1, global_t2)
+    logger.info("-" * 85)
 
-    # Vẽ và lưu biểu đồ phân tích Histogram toàn cục
-    fig_hist = plot_histogram_analysis(
-        hist=global_hist_info["hist"],
-        bin_centers=global_hist_info["bin_centers"],
-        peaks=global_hist_info["peaks"],
-        threshold=global_threshold,
-        feature_name=HIST_FEATURE_TYPE.value,
-        title_text="Dữ liệu gộp 4 file huấn luyện",
-        weight=DEFAULT_WEIGHT,
-        save_path=os.path.join(FIGURES_DIR, "global_histogram_analysis.png"),
+    # Xuất đồ thị 2 Histogram toàn cục
+    fig_hist = plot_dual_histogram_analysis(
+        energy_info=global_hist_e,
+        centroid_info=global_hist_c,
+        title_text="Dữ liệu gộp 4 file huấn luyện (Thuật toán 2)",
+        save_path=os.path.join(FIGURES_DIR, "global_histogram_dual_features.png"),
     )
     plt.close(fig_hist)
 
-    # 3. Đánh giá định lượng
-    logger.info("KẾT QUẢ ĐÁNH GIÁ ĐỊNH LƯỢNG VỚI GLOBAL HISTOGRAM THRESHOLD (T=%.5f):", global_threshold)
-    logger.info("%-12s | %-8s | %-10s | %-10s | %-10s | %-10s | %-10s",
-                "File", "SNR (dB)", "MAE (ms)", "RMSE (ms)", "Precision", "Recall", "F1-Score")
-    logger.info("-" * 85)
+    # 3. Đánh giá và xuất biểu đồ từng file (ở chế độ Ngưỡng động thích nghi - chuẩn Giannakopoulos)
+    logger.info("KẾT QUẢ ĐÁNH GIÁ (CHẾ ĐỘ NGƯỠNG ĐỘNG ADAPTIVE HISTOGRAM 2-FEATURE):")
+    logger.info("%-12s | %-8s | %-12s | %-12s | %-10s | %-10s | %-10s",
+                "File", "SNR (dB)", "T1 (Energy)", "T2 (Centroid)", "MAE (ms)", "RMSE (ms)", "F1-Score")
+    logger.info("-" * 95)
 
     eval_summary = []
-    all_maes, all_rmses = [], []
+    valid_maes, valid_rmses = [], []
 
     for idx, item in enumerate(file_data_list, start=1):
         stem = item["stem"]
-        smoothed_feat = item["smoothed_feat"]
-        frame_centers = item["frame_centers"]
-        signal = item["signal"]
-        sr = item["sr"]
-        gt_segments = item["gt_segments"]
-        duration_s = item["duration_s"]
+        metrics = item["dyn_metrics"]
+        t_e = item["t_e_dyn"]
+        t_c = item["t_c_dyn"]
 
-        # Phân loại và lọc khoảng lặng ngắn
-        labels = classify_frames(smoothed_feat, global_threshold)
-        raw_segs = frames_to_segments(labels, frame_centers, signal_duration_s=duration_s)
-        final_segs = remove_short_silence(raw_segs, min_duration_ms=MIN_SILENCE_DURATION_MS)
-
-        metrics = evaluate_boundaries(final_segs, gt_segments)
-
-        mae_str = f"{metrics['mae_ms']:10.1f}" if not np.isnan(metrics['mae_ms']) else "       nan"
-        rmse_str = f"{metrics['rmse_ms']:10.1f}" if not np.isnan(metrics['rmse_ms']) else "       nan"
+        mae_str = f"{metrics['mae_ms']:10.1f}" if not np.isnan(metrics.get("mae_ms", float("nan"))) else "       nan"
+        rmse_str = f"{metrics['rmse_ms']:10.1f}" if not np.isnan(metrics.get("rmse_ms", float("nan"))) else "       nan"
 
         logger.info(
-            "%-12s | %8.1f | %s | %s | %9.1f%% | %9.1f%% | %9.1f%%",
-            stem, item["snr_db"], mae_str, rmse_str,
-            metrics["precision"] * 100, metrics["recall"] * 100, metrics["f1_score"] * 100,
+            "%-12s | %8.1f | %12.6f | %12.2f | %s | %s | %9.1f%%",
+            stem, item["snr_db"], t_e, t_c, mae_str, rmse_str, metrics.get("f1_score", 0.0) * 100,
         )
 
-        if not np.isnan(metrics["mae_ms"]):
-            all_maes.append(metrics["mae_ms"])
-            all_rmses.append(metrics["rmse_ms"])
+        if not np.isnan(metrics.get("mae_ms", float("nan"))):
+            valid_maes.append(metrics["mae_ms"])
+            valid_rmses.append(metrics["rmse_ms"])
 
-        # Xuất biểu đồ phân đoạn cho file này
-        save_path = os.path.join(FIGURES_DIR, f"{stem}_segmentation_algo2.png")
+        # Xuất đồ thị 3 subplot cho từng file
         fig_single = plot_single_file_result(
-            signal=signal,
-            sample_rate=sr,
-            feature_vals=smoothed_feat,
-            frame_centers=frame_centers,
-            pred_segments=final_segs,
-            gt_segments=gt_segments,
-            threshold=global_threshold,
-            feature_name=f"{HIST_FEATURE_TYPE.value} (Smoothed)",
-            title_text=f"{stem} - Thuật toán 2 (Histogram T={global_threshold:.5f})",
+            signal=item["signal"],
+            sample_rate=item["sr"],
+            feature_vals=item["energy_vals"],
+            frame_centers=item["frame_centers"],
+            pred_segments=item["dyn_segs"],
+            gt_segments=item["gt_segments"],
+            threshold=t_e,
+            feature_name="Energy",
+            title_text=f"{stem} (Giannakopoulos 2014)",
             metrics=metrics,
-            save_path=save_path,
-            fig_num=idx + 20,
+            save_path=os.path.join(FIGURES_DIR, f"{stem}_segmentation_algo2.png"),
+            fig_num=idx,
+            corner_label=f"[File {idx}]",
+            snr_db=item["snr_db"],
+            centroid_vals=item["centroid_vals"],
+            threshold_centroid=t_c,
         )
         plt.close(fig_single)
 
         eval_summary.append({
             "stem": stem,
             "snr_db": round(item["snr_db"], 2),
-            "per_file_threshold": round(item["per_file_threshold"], 6),
-            "mae_ms": round(metrics["mae_ms"], 2) if not np.isnan(metrics["mae_ms"]) else None,
-            "rmse_ms": round(metrics["rmse_ms"], 2) if not np.isnan(metrics["rmse_ms"]) else None,
-            "precision": round(metrics["precision"], 4),
-            "recall": round(metrics["recall"], 4),
-            "f1_score": round(metrics["f1_score"], 4),
+            "threshold_energy": round(t_e, 6),
+            "threshold_centroid": round(t_c, 2),
+            "mae_ms": round(metrics["mae_ms"], 2) if not np.isnan(metrics.get("mae_ms", float("nan"))) else None,
+            "rmse_ms": round(metrics["rmse_ms"], 2) if not np.isnan(metrics.get("rmse_ms", float("nan"))) else None,
+            "precision": round(metrics.get("precision", 0.0), 4),
+            "recall": round(metrics.get("recall", 0.0), 4),
+            "f1_score": round(metrics.get("f1_score", 0.0), 4),
         })
 
-    avg_mae = float(np.mean(all_maes)) if all_maes else float("nan")
-    avg_rmse = float(np.mean(all_rmses)) if all_rmses else float("nan")
+    avg_mae = float(np.mean(valid_maes)) if valid_maes else float("nan")
+    avg_rmse = float(np.mean(valid_rmses)) if valid_rmses else float("nan")
 
-    logger.info("-" * 85)
-    logger.info("TRUNG BÌNH TOÀN BỘ TẬP HUẤN LUYỆN (THUẬT TOÁN 2): MAE = %.2f ms | RMSE = %.2f ms", avg_mae, avg_rmse)
-    logger.info("=" * 85)
+    logger.info("-" * 95)
+    logger.info("TRUNG BÌNH TOÀN BỘ CÁC FILE: MAE = %.2f ms | RMSE = %.2f ms", avg_mae, avg_rmse)
+    logger.info("=" * 95)
 
     config_data = {
-        "algorithm": "Giannakopoulos 2014 (Histogram-based)",
-        "feature_type": HIST_FEATURE_TYPE.value,
+        "algorithm": "Giannakopoulos 2014 (Histogram 2-Feature: Energy & Spectral Centroid)",
+        "features": ["Short-Time Energy (E)", "Spectral Centroid (C)"],
         "frame_length_ms": FRAME_LENGTH_MS,
         "frame_shift_ms": FRAME_SHIFT_MS,
         "min_silence_duration_ms": MIN_SILENCE_DURATION_MS,
-        "num_bins": DEFAULT_NUM_BINS,
-        "weight": DEFAULT_WEIGHT,
-        "global_threshold": float(global_threshold),
-        "v1_silence_peak": global_hist_info.get("v1"),
-        "v2_speech_peak": global_hist_info.get("v2"),
+        "weight_energy": DEFAULT_WEIGHT_ENERGY,
+        "weight_centroid": DEFAULT_WEIGHT_CENTROID,
+        "expand_frames": EXPAND_FRAMES,
+        "global_threshold_energy": float(global_t1),
+        "global_threshold_centroid": float(global_t2),
+        "global_threshold": float(global_t1),
         "average_mae_ms": round(avg_mae, 2) if not np.isnan(avg_mae) else None,
         "average_rmse_ms": round(avg_rmse, 2) if not np.isnan(avg_rmse) else None,
         "files": eval_summary,
@@ -252,7 +259,7 @@ def run_training_algorithm2():
 
     json_dest = os.path.join(OUTPUT_DIR, "histogram_threshold.json")
     save_threshold_json(config_data, json_dest)
-    logger.info("Đã lưu cấu hình ngưỡng Histogram vào: %s", json_dest)
+    logger.info("Đã lưu cấu hình ngưỡng tối ưu vào: %s", json_dest)
 
 
 if __name__ == "__main__":

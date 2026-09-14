@@ -2,7 +2,7 @@
 main.py – Điểm khởi chạy chính (Entry Point) của đồ án Xử lý tín hiệu tiếng nói.
 Hỗ trợ cả 2 thuật toán:
 - Thuật toán 1: Năng lượng ngắn hạn kết hợp Tìm kiếm nhị phân (Hodgkinson 2012)
-- Thuật toán 2: Phân đoạn dựa trên Histogram (Giannakopoulos 2014)
+- Thuật toán 2: Phân đoạn dựa trên 2 đặc trưng Histogram Energy & Spectral Centroid (Giannakopoulos 2014)
 
 Quy cách theo hướng dẫn của Giảng viên:
 - Bấm Run chạy 01 lần duy nhất từ file main.py.
@@ -42,6 +42,7 @@ from src.config import (
     TRAINING_DIR, FeatureType, Segment,
 )
 from src.features import (
+    compute_energy_and_spectral_centroid,
     compute_short_time_feature,
 )
 from src.algorithms import (
@@ -70,6 +71,7 @@ CORNER_LABELS = [
 def run_evaluation(
     data_dir: str,
     threshold: float,
+    threshold_centroid: float = 32.35,
     algo_name: str = "Thuật toán 1: Hodgkinson 2012 (Binary Search)",
     algo: int = 1,
     mode: str = "global",
@@ -91,14 +93,15 @@ def run_evaluation(
 
     results: List[Dict[str, Any]] = []
     mode_desc = "Ngưỡng Toàn Cục (Global)" if mode == "global" else "Ngưỡng Động Thích Nghi (Dynamic)"
+    feat_desc = "Energy & Spectral Centroid (DFT)" if algo == 2 else feature_type.value
 
-    print("\n" + "=" * 105)
+    print("\n" + "=" * 110)
     print(f"   DEMO: {algo_name}")
     print(f"   Thư mục dữ liệu: {data_dir}")
-    print(f"   Chế độ: {mode_desc} | Đặc trưng: {feature_type.value} | Lọc khoảng lặng: >= {int(MIN_SILENCE_DURATION_MS)} ms")
-    print("=" * 105)
-    print(f"{'STT':<4} | {'Tên file':<12} | {'SNR (dB)':<9} | {'Ngưỡng T':<11} | {'MAE (ms)':<9} | {'RMSE (ms)':<10} | {'Precision':<10} | {'Recall':<10} | {'F1-Score':<10}")
-    print("-" * 105)
+    print(f"   Chế độ: {mode_desc} | Đặc trưng: {feat_desc} | Lọc khoảng lặng: >= {int(MIN_SILENCE_DURATION_MS)} ms")
+    print("=" * 110)
+    print(f"{'STT':<4} | {'Tên file':<12} | {'SNR (dB)':<9} | {'Ngưỡng T':<16} | {'MAE (ms)':<9} | {'RMSE (ms)':<10} | {'Precision':<10} | {'Recall':<10} | {'F1-Score':<10}")
+    print("-" * 110)
 
     for idx, wav_f in enumerate(wav_files[:4], start=1):
         stem = wav_f.stem
@@ -112,37 +115,67 @@ def run_evaluation(
         gt_segments = load_ground_truth(lab_segs) if has_gt else []
         snr_val = compute_snr_db(signal, sr, lab_segs) if has_gt else float("nan")
 
-        feat_vals, frame_centers = compute_short_time_feature(
-            signal=signal,
-            sample_rate=sr,
-            frame_length_ms=FRAME_LENGTH_MS,
-            frame_shift_ms=FRAME_SHIFT_MS,
-            feature_type=feature_type,
-        )
-
-        # Áp dụng bộ lọc trung vị nếu là thuật toán Histogram
-        if use_median_filter:
-            from src.algorithms.histogram import median_filter_1d
-            eval_feat = median_filter_1d(feat_vals, kernel_size=5)
-        else:
-            eval_feat = feat_vals
-
         corner_label = CORNER_LABELS[idx - 1] if idx - 1 < len(CORNER_LABELS) else f"[Góc {idx}]"
 
-        # Phân đoạn theo chế độ Global hoặc Dynamic
-        if mode == "dynamic":
-            if algo == 2:
-                # Thuật toán 2: Tính ngưỡng histogram động cho riêng file này (unsupervised)
-                from src.algorithms.histogram import HistogramSegmenter
-                seg_hist = HistogramSegmenter(num_bins=60, weight=4.0)
-                current_threshold, final_segs = seg_hist.fit_and_segment_dynamic(
-                    feature_values=eval_feat,
-                    frame_centers=frame_centers,
-                    signal_duration_s=duration_s,
+        if algo == 2:
+            # Thuật toán 2: Giannakopoulos 2014 chuẩn 2 đặc trưng (Energy & Spectral Centroid)
+            energy_vals, centroid_vals, frame_centers = compute_energy_and_spectral_centroid(
+                signal=signal,
+                sample_rate=sr,
+                frame_length_ms=FRAME_LENGTH_MS,
+                frame_shift_ms=FRAME_SHIFT_MS,
+                use_hamming=True,
+            )
+
+            if mode == "dynamic":
+                seg_hist = HistogramSegmenter(
+                    num_bins=60,
+                    weight_energy=5.0,
+                    weight_centroid=2.0,
+                    expand_frames=3,
                     min_silence_duration_ms=MIN_SILENCE_DURATION_MS,
                 )
+                current_threshold, current_centroid_t, final_segs = seg_hist.fit_and_segment_dynamic(
+                    energy_vals=energy_vals,
+                    centroid_vals=centroid_vals,
+                    frame_centers=frame_centers,
+                    signal_duration_s=duration_s,
+                )
             else:
-                # Thuật toán 1: Binary search tối ưu cho riêng file này
+                current_threshold = threshold
+                current_centroid_t = threshold_centroid
+                seg_hist = HistogramSegmenter(
+                    num_bins=60,
+                    weight_energy=5.0,
+                    weight_centroid=2.0,
+                    expand_frames=3,
+                    min_silence_duration_ms=MIN_SILENCE_DURATION_MS,
+                )
+                seg_hist.threshold_energy = current_threshold
+                seg_hist.threshold_centroid = current_centroid_t
+                final_segs = seg_hist.segment(
+                    energy_vals=energy_vals,
+                    frame_centers=frame_centers,
+                    signal_duration_s=duration_s,
+                    centroid_vals=centroid_vals,
+                )
+
+            t_display = f"{current_threshold:.5f}/{current_centroid_t:.1f}"
+            plot_feature_vals = energy_vals
+            plot_feature_name = "Energy"
+
+        else:
+            # Thuật toán 1: Hodgkinson 2012 (Binary Search)
+            feat_vals, frame_centers = compute_short_time_feature(
+                signal=signal,
+                sample_rate=sr,
+                frame_length_ms=FRAME_LENGTH_MS,
+                frame_shift_ms=FRAME_SHIFT_MS,
+                feature_type=feature_type,
+            )
+            eval_feat = feat_vals
+
+            if mode == "dynamic":
                 if has_gt and len(lab_segs) > 0:
                     from src.features import assign_frame_labels
                     from src.algorithms.binary_search import find_optimal_threshold_binary_search
@@ -160,11 +193,17 @@ def run_evaluation(
                 labels = classify_frames(eval_feat, current_threshold)
                 raw_segs = frames_to_segments(labels, frame_centers, signal_duration_s=duration_s)
                 final_segs = remove_short_silence(raw_segs, min_duration_ms=MIN_SILENCE_DURATION_MS)
-        else:
-            current_threshold = threshold
-            labels = classify_frames(eval_feat, current_threshold)
-            raw_segs = frames_to_segments(labels, frame_centers, signal_duration_s=duration_s)
-            final_segs = remove_short_silence(raw_segs, min_duration_ms=MIN_SILENCE_DURATION_MS)
+            else:
+                current_threshold = threshold
+                labels = classify_frames(eval_feat, current_threshold)
+                raw_segs = frames_to_segments(labels, frame_centers, signal_duration_s=duration_s)
+                final_segs = remove_short_silence(raw_segs, min_duration_ms=MIN_SILENCE_DURATION_MS)
+
+            current_centroid_t = None
+            centroid_vals = None
+            t_display = f"{current_threshold:<16.5f}"
+            plot_feature_vals = eval_feat
+            plot_feature_name = feature_type.value
 
         metrics = evaluate_boundaries(final_segs, gt_segments) if has_gt else {}
 
@@ -175,24 +214,26 @@ def run_evaluation(
         f1_display = f"{metrics.get('f1_score', 0.0) * 100:.1f}%" if has_gt else "N/A"
         snr_display = f"{snr_val:.1f}" if not np.isnan(snr_val) else "N/A"
 
-        print(f"{idx:<4} | {stem:<12} | {snr_display:<9} | {current_threshold:<11.5f} | {mae_display:<9} | {rmse_display:<10} | {prec_display:<10} | {rec_display:<10} | {f1_display:<10}")
+        print(f"{idx:<4} | {stem:<12} | {snr_display:<9} | {t_display:<16} | {mae_display:<9} | {rmse_display:<10} | {prec_display:<10} | {rec_display:<10} | {f1_display:<10}")
 
         save_path = os.path.join(save_dir, f"{stem}_output.png") if save_dir else None
         fig = plot_single_file_result(
             signal=signal,
             sample_rate=sr,
-            feature_vals=eval_feat,
+            feature_vals=plot_feature_vals,
             frame_centers=frame_centers,
             pred_segments=final_segs,
             gt_segments=gt_segments,
             threshold=current_threshold,
-            feature_name=feature_type.value,
+            feature_name=plot_feature_name,
             title_text=f"File {idx}: {stem}",
             metrics=metrics if has_gt else None,
             save_path=save_path,
             fig_num=idx,
             corner_label=corner_label,
             snr_db=snr_val if has_gt else None,
+            centroid_vals=centroid_vals if algo == 2 else None,
+            threshold_centroid=current_centroid_t if algo == 2 else None,
         )
 
         results.append({
@@ -201,7 +242,7 @@ def run_evaluation(
             "threshold": current_threshold,
         })
 
-    print("-" * 105)
+    print("-" * 110)
 
     if show_gui:
         arrange_four_figures_on_screen()
@@ -220,11 +261,11 @@ def main():
     )
     parser.add_argument(
         "--algo", type=int, choices=[1, 2], default=1,
-        help="Lựa chọn thuật toán: 1 (Hodgkinson 2012 - Binary Search), 2 (Giannakopoulos 2014 - Histogram)",
+        help="Lựa chọn thuật toán: 1 (Hodgkinson 2012 - Binary Search), 2 (Giannakopoulos 2014 - Histogram 2-Feature)",
     )
     parser.add_argument(
-        "--mode", type=str, choices=["global", "dynamic"], default="global",
-        help="Chế độ ngưỡng: 'global' (ngưỡng dùng chung toàn cục), 'dynamic' (ngưỡng động thích nghi theo từng file)",
+        "--mode", type=str, choices=["global", "dynamic"], default="dynamic",
+        help="Chế độ ngưỡng: 'global' (ngưỡng dùng chung toàn cục), 'dynamic' (ngưỡng động thích nghi theo từng file - mặc định)",
     )
     parser.add_argument(
         "--dir", type=str, default="",
@@ -260,6 +301,7 @@ def main():
             return
 
     # 2. Xác định thuật toán và ngưỡng T tương ứng
+    threshold_centroid = 32.35
     if args.algo == 1:
         algo_name = "Thuật toán 1: Hodgkinson 2012 (Binary Search)"
         feature_type = FeatureType.LOG_MA
@@ -267,10 +309,11 @@ def main():
         default_t = -5.284692
         cfg_file = os.path.join(OUTPUT_DIR, "global_threshold.json")
     else:
-        algo_name = "Thuật toán 2: Giannakopoulos 2014 (Histogram)"
+        algo_name = "Thuật toán 2: Giannakopoulos 2014 (Histogram 2-Feature: Energy & Centroid)"
         feature_type = FeatureType.MA
-        use_median_filter = True
-        default_t = 0.039178
+        use_median_filter = False
+        default_t = 0.011927
+        threshold_centroid = 32.35
         cfg_file = os.path.join(OUTPUT_DIR, "histogram_threshold.json")
 
     threshold_val = args.threshold
@@ -278,8 +321,9 @@ def main():
         if os.path.exists(cfg_file):
             try:
                 cfg = load_threshold_json(cfg_file)
-                threshold_val = float(cfg.get("global_threshold", default_t))
-                logger.info("Đã nạp ngưỡng tối ưu từ file cấu hình %s: T = %.6f", cfg_file, threshold_val)
+                threshold_val = float(cfg.get("global_threshold_energy", cfg.get("global_threshold", default_t)))
+                threshold_centroid = float(cfg.get("global_threshold_centroid", threshold_centroid))
+                logger.info("Đã nạp ngưỡng tối ưu từ file cấu hình %s: T1 = %.6f, T2 = %.2f", cfg_file, threshold_val, threshold_centroid)
             except Exception as e:
                 logger.warning("Không đọc được cấu hình từ %s (%s). Dùng mặc định.", cfg_file, e)
                 threshold_val = default_t
@@ -293,6 +337,7 @@ def main():
     run_evaluation(
         data_dir=target_dir,
         threshold=threshold_val,
+        threshold_centroid=threshold_centroid,
         algo_name=algo_name,
         algo=args.algo,
         mode=args.mode,

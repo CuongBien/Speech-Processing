@@ -3,11 +3,11 @@ phone_F1,Dien thoai,23.8,Hodgkinson 2012 (Binary Search),Global,-5.284692,nan,na
 phone_M1,Dien thoai,23.3,Hodgkinson 2012 (Binary Search),Global,-5.284692,10.0,11.2,100.0%,100.0%,100.0%
 studio_F1,Phong thu,38.8,Hodgkinson 2012 (Binary Search),Global,-5.284692,5.0,5.0,100.0%,100.0%,100.0%
 studio_M1,Phong thu,37.8,Hodgkinson 2012 (Binary Search),Global,-5.284692,10.0,11.2,100.0%,100.0%,100.0%
-phone_F1,Dien thoai,23.8,Giannakopoulos 2014 (Histogram),Global,0.039178,15.0,15.0,100.0%,100.0%,100.0%
-phone_M1,Dien thoai,23.3,Giannakopoulos 2014 (Histogram),Global,0.039178,60.0,65.0,33.3%,100.0%,50.0%
-studio_F1,Phong thu,38.8,Giannakopoulos 2014 (Histogram),Global,0.039178,20.0,25.0,100.0%,100.0%,100.0%
-studio_M1,Phong thu,37.8,Giannakopoulos 2014 (Histogram),Global,0.039178,55.0,55.0,50.0%,50.0%,50.0%
-phone_F1,Dien thoai,23.8,Giannakopoulos 2014 (Histogram),Dynamic,0.03182,15.0,15.0,100.0%,100.0%,100.0%
-phone_M1,Dien thoai,23.3,Giannakopoulos 2014 (Histogram),Dynamic,0.010663,10.0,11.2,100.0%,100.0%,100.0%
-studio_F1,Phong thu,38.8,Giannakopoulos 2014 (Histogram),Dynamic,0.007591,5.0,5.0,100.0%,100.0%,100.0%
-studio_M1,Phong thu,37.8,Giannakopoulos 2014 (Histogram),Dynamic,0.012898,40.0,42.7,100.0%,100.0%,100.0%
+phone_F1,Dien thoai,23.8,Giannakopoulos 2014 (Histogram 2-Feature),Global,"E=0.01193, C=32.4",5.0,5.0,100.0%,100.0%,100.0%
+phone_M1,Dien thoai,23.3,Giannakopoulos 2014 (Histogram 2-Feature),Global,"E=0.01193, C=32.4",45.0,46.1,33.3%,100.0%,50.0%
+studio_F1,Phong thu,38.8,Giannakopoulos 2014 (Histogram 2-Feature),Global,"E=0.01193, C=32.4",15.0,18.0,100.0%,100.0%,100.0%
+studio_M1,Phong thu,37.8,Giannakopoulos 2014 (Histogram 2-Feature),Global,"E=0.01193, C=32.4",55.0,62.6,50.0%,100.0%,66.7%
+phone_F1,Dien thoai,23.8,Giannakopoulos 2014 (Histogram 2-Feature),Dynamic,"E=0.00361, C=18.9",15.0,15.0,100.0%,100.0%,100.0%
+phone_M1,Dien thoai,23.3,Giannakopoulos 2014 (Histogram 2-Feature),Dynamic,"E=0.00041, C=29.5",25.0,26.9,100.0%,100.0%,100.0%
+studio_F1,Phong thu,38.8,Giannakopoulos 2014 (Histogram 2-Feature),Dynamic,"E=0.00116, C=34.3",30.0,30.4,100.0%,100.0%,100.0%
+studio_M1,Phong thu,37.8,Giannakopoulos 2014 (Histogram 2-Feature),Dynamic,"E=0.00126, C=36.8",20.0,20.6,100.0%,100.0%,100.0%
