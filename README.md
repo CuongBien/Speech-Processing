@@ -83,11 +83,11 @@ python main.py --no-gui
 
 ### B. Chạy Huấn luyện & Khảo sát Tham số Tối ưu:
 ```powershell
-# Huấn luyện Thuật toán 1:
+# Huấn luyện Thuật toán 1 (Hodgkinson 2012 - Binary Search):
 python scripts/train_algo1.py
 
-# Hoặc dùng shortcut ở thư mục gốc:
-python train_algorithm1.py
+# Huấn luyện Thuật toán 2 (Giannakopoulos 2014 - Histogram):
+python scripts/train_algo2.py
 ```
 
 ### C. Chạy Bộ kiểm thử tự động (Unit Tests):
