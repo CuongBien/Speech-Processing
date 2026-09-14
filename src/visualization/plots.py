@@ -4,7 +4,7 @@ src/visualization/plots.py – Các hàm vẽ đồ thị trực quan hóa tín 
 
 import logging
 import os
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 import matplotlib.pyplot as plt
 import numpy as np
@@ -136,3 +136,49 @@ def plot_distribution_and_overlap(
         fig.savefig(save_path, dpi=200, bbox_inches="tight")
 
     return fig
+
+
+def plot_histogram_analysis(
+    hist: np.ndarray,
+    bin_centers: np.ndarray,
+    peaks: List[Tuple[int, float, float]],
+    threshold: float,
+    feature_name: str,
+    title_text: str,
+    weight: float = 4.0,
+    save_path: Optional[str] = None,
+) -> plt.Figure:
+    """
+    Vẽ biểu đồ phân tích Histogram theo Giannakopoulos (2014):
+    - Các cột phân phối tần suất của đặc trưng ngắn hạn.
+    - Điểm đánh dấu đỉnh khoảng lặng M1 và đỉnh tiếng nói M2.
+    - Đường thẳng đứng biểu diễn ngưỡng tối ưu T có trọng số.
+    """
+    fig, ax = plt.subplots(figsize=(9, 5), clear=True)
+
+    width = (bin_centers[1] - bin_centers[0]) * 0.9 if len(bin_centers) > 1 else 0.01
+    ax.bar(bin_centers, hist, width=width, color="#3498db", alpha=0.65, label=f"Histogram {feature_name}", edgecolor="#2980b9")
+
+    # Đánh dấu các đỉnh cực đại tìm được
+    if len(peaks) >= 1:
+        ax.plot(peaks[0][1], peaks[0][2], "ro", markersize=9, label=f"Đỉnh M1 (Khoảng lặng) = {peaks[0][1]:.4f}")
+    if len(peaks) >= 2:
+        ax.plot(peaks[1][1], peaks[1][2], "go", markersize=9, label=f"Đỉnh M2 (Tiếng nói) = {peaks[1][1]:.4f}")
+
+    # Vẽ đường ngưỡng cắt T
+    ax.axvline(threshold, color="#e74c3c", linewidth=2.0, linestyle="--",
+               label=f"Ngưỡng T = {threshold:.4f} (W={weight})")
+
+    ax.set_title(f"Phân tích Histogram (Giannakopoulos 2014) - {title_text}", fontsize=11, fontweight="bold")
+    ax.set_xlabel(f"Giá trị đặc trưng {feature_name}", fontsize=10, fontweight="bold")
+    ax.set_ylabel("Số lượng khung (Counts)", fontsize=10, fontweight="bold")
+    ax.grid(True, linestyle=":", alpha=0.5)
+    ax.legend(loc="upper right", fontsize=9, framealpha=0.9)
+    plt.tight_layout()
+
+    if save_path:
+        os.makedirs(os.path.dirname(save_path), exist_ok=True)
+        fig.savefig(save_path, dpi=200, bbox_inches="tight")
+
+    return fig
+

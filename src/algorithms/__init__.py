@@ -9,7 +9,12 @@ from src.algorithms.binary_search import (
     find_optimal_threshold_binary_search,
     find_overlap_region,
 )
-from src.algorithms.histogram import HistogramSegmenter
+from src.algorithms.histogram import (
+    HistogramSegmenter,
+    compute_histogram_threshold,
+    find_histogram_peaks,
+    median_filter_1d,
+)
 
 __all__ = [
     "BaseSegmenter",
@@ -18,4 +23,7 @@ __all__ = [
     "find_overlap_region",
     "compute_confusion",
     "find_optimal_threshold_binary_search",
+    "median_filter_1d",
+    "find_histogram_peaks",
+    "compute_histogram_threshold",
 ]

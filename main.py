@@ -63,6 +63,8 @@ def run_evaluation(
     data_dir: str,
     threshold: float,
     algo_name: str = "Thuật toán 1: Hodgkinson 2012 (Binary Search)",
+    feature_type: FeatureType = DEFAULT_FEATURE_TYPE,
+    use_median_filter: bool = False,
     show_gui: bool = True,
     save_dir: str = "",
 ) -> List[Dict[str, Any]]:
@@ -81,7 +83,7 @@ def run_evaluation(
     print("\n" + "=" * 90)
     print(f"   DEMO: {algo_name}")
     print(f"   Thư mục dữ liệu: {data_dir}")
-    print(f"   Đặc trưng: {DEFAULT_FEATURE_TYPE.value} | Ngưỡng T = {threshold:.6f} | Lọc khoảng lặng: >= {int(MIN_SILENCE_DURATION_MS)} ms")
+    print(f"   Đặc trưng: {feature_type.value} | Ngưỡng T = {threshold:.6f} | Lọc khoảng lặng: >= {int(MIN_SILENCE_DURATION_MS)} ms")
     print("=" * 90)
     print(f"{'STT':<4} | {'Tên file':<12} | {'SNR (dB)':<9} | {'MAE (ms)':<9} | {'RMSE (ms)':<10} | {'Precision':<10} | {'Recall':<10} | {'F1-Score':<10}")
     print("-" * 90)
@@ -103,10 +105,17 @@ def run_evaluation(
             sample_rate=sr,
             frame_length_ms=FRAME_LENGTH_MS,
             frame_shift_ms=FRAME_SHIFT_MS,
-            feature_type=DEFAULT_FEATURE_TYPE,
+            feature_type=feature_type,
         )
 
-        labels = classify_frames(feat_vals, threshold)
+        # Áp dụng bộ lọc trung vị nếu là thuật toán Histogram
+        if use_median_filter:
+            from src.algorithms.histogram import median_filter_1d
+            eval_feat = median_filter_1d(feat_vals, kernel_size=5)
+        else:
+            eval_feat = feat_vals
+
+        labels = classify_frames(eval_feat, threshold)
         raw_segs = frames_to_segments(labels, frame_centers, signal_duration_s=duration_s)
         final_segs = remove_short_silence(raw_segs, min_duration_ms=MIN_SILENCE_DURATION_MS)
 
@@ -125,12 +134,12 @@ def run_evaluation(
         fig = plot_single_file_result(
             signal=signal,
             sample_rate=sr,
-            feature_vals=feat_vals,
+            feature_vals=eval_feat,
             frame_centers=frame_centers,
             pred_segments=final_segs,
             gt_segments=gt_segments,
             threshold=threshold,
-            feature_name=DEFAULT_FEATURE_TYPE.value,
+            feature_name=feature_type.value,
             title_text=f"File {idx}: {stem}",
             metrics=metrics if has_gt else None,
             save_path=save_path,
@@ -199,9 +208,15 @@ def main():
     # 2. Xác định thuật toán và ngưỡng T tương ứng
     if args.algo == 1:
         algo_name = "Thuật toán 1: Hodgkinson 2012 (Binary Search)"
+        feature_type = FeatureType.LOG_MA
+        use_median_filter = False
+        default_t = -5.284692
         cfg_file = os.path.join(OUTPUT_DIR, "global_threshold.json")
     else:
         algo_name = "Thuật toán 2: Giannakopoulos 2014 (Histogram)"
+        feature_type = FeatureType.MA
+        use_median_filter = True
+        default_t = 0.039178
         cfg_file = os.path.join(OUTPUT_DIR, "histogram_threshold.json")
 
     threshold_val = args.threshold
@@ -209,13 +224,13 @@ def main():
         if os.path.exists(cfg_file):
             try:
                 cfg = load_threshold_json(cfg_file)
-                threshold_val = float(cfg.get("global_threshold", -5.284692))
+                threshold_val = float(cfg.get("global_threshold", default_t))
                 logger.info("Đã nạp ngưỡng tối ưu từ file cấu hình %s: T = %.6f", cfg_file, threshold_val)
             except Exception as e:
                 logger.warning("Không đọc được cấu hình từ %s (%s). Dùng mặc định.", cfg_file, e)
-                threshold_val = -5.284692
+                threshold_val = default_t
         else:
-            threshold_val = -5.284692
+            threshold_val = default_t
             logger.info("Sử dụng ngưỡng tối ưu mặc định: T = %.6f", threshold_val)
 
     save_dir = args.save_dir if args.save_dir else os.path.join(OUTPUT_DIR, "figures")
@@ -225,6 +240,8 @@ def main():
         data_dir=target_dir,
         threshold=threshold_val,
         algo_name=algo_name,
+        feature_type=feature_type,
+        use_median_filter=use_median_filter,
         show_gui=not args.no_gui,
         save_dir=save_dir,
     )

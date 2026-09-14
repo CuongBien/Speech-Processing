@@ -37,8 +37,11 @@ from src.algorithms import (
     BinarySearchSegmenter,
     HistogramSegmenter,
     compute_confusion,
+    compute_histogram_threshold,
+    find_histogram_peaks,
     find_optimal_threshold_binary_search,
     find_overlap_region,
+    median_filter_1d,
 )
 from src.segmentation import (
     classify_frames,
@@ -51,6 +54,7 @@ from src.segmentation import (
 from src.visualization import (
     arrange_four_figures_on_screen,
     plot_distribution_and_overlap,
+    plot_histogram_analysis,
     plot_single_file_result,
 )
 
