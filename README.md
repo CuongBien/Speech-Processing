@@ -97,14 +97,30 @@ python -m unittest discover tests
 
 ---
 
-## 4. Kết quả Thực nghiệm Thuật toán 1 (Hodgkinson 2012)
+## 4. Kết quả Thực nghiệm & So sánh Giữa 2 Thuật Toán
 
-- **Ngưỡng dùng chung tối ưu**: $T_{\text{global}} = -5.284692$ ($\log\text{MA}$)
-- **Quy tắc hậu xử lý**: Loại bỏ khoảng lặng ngắn $< 300\,\text{ms}$.
+### Bảng Đánh giá Hiệu năng (So khớp với Ground-Truth .lab)
 
-| File âm thanh | Kênh thu âm | SNR (dB) | MAE (ms) | RMSE (ms) | F1-Score |
-| :--- | :---: | :---: | :---: | :---: | :---: |
-| **`phone_M1`** | Điện thoại | 23.3 dB | **10.0 ms** | **11.2 ms** | **100.0%** |
-| **`studio_F1`** | Phòng thu | 38.8 dB | **5.0 ms** | **5.0 ms** | **100.0%** |
-| **`studio_M1`** | Phòng thu | 37.8 dB | **10.0 ms** | **11.2 ms** | **100.0%** |
-| **`phone_F1`** *(ngưỡng riêng)* | Điện thoại | 23.8 dB | **5.0 ms** | **5.0 ms** | **66.7%** |
+| File Âm Thanh | Kênh / Môi trường | SNR (dB) | Thuật toán 1 (Hodgkinson 2012)<br>$T_{\text{global}} = -5.2847$ ($\log\text{MA}$) | Thuật toán 2 (Giannakopoulos 2014)<br>$T_{\text{global}} = 0.0392$ ($\text{MA}$) |
+| :--- | :--- | :---: | :---: | :---: |
+| **`phone_F1`** | Điện thoại (Nữ) | **23.8** | F1: `0.0%` *(Nhiễu nền lớn)* | **MAE: 15.0 ms \| RMSE: 15.0 ms \| F1: 100.0%** |
+| **`phone_M1`** | Điện thoại (Nam) | **23.3** | **MAE: 10.0 ms \| RMSE: 11.2 ms \| F1: 100.0%** | **MAE: 60.0 ms \| RMSE: 65.0 ms \| F1: 50.0%** *(Per-file: F1=100%, MAE=35ms)* |
+| **`studio_F1`**| Phòng thu (Nữ) | **38.8** | **MAE: 5.0 ms \| RMSE: 5.0 ms \| F1: 100.0%** | **MAE: 20.0 ms \| RMSE: 25.0 ms \| F1: 100.0%** |
+| **`studio_M1`**| Phòng thu (Nam) | **37.8** | **MAE: 10.0 ms \| RMSE: 11.2 ms \| F1: 100.0%** | **MAE: 55.0 ms \| RMSE: 55.0 ms \| F1: 50.0%** *(Per-file: F1=100%, MAE=5ms)* |
+
+---
+
+## 5. Kịch bản Huấn luyện Tham số (Scripts)
+
+- **Thuật toán 1 (Binary Search)**:
+  ```powershell
+  python scripts/train_algo1.py
+  ```
+  Xuất cấu hình ngưỡng tối ưu ra `output/global_threshold.json` và biểu đồ phân phối overlap ra `output/figures/global_distribution_overlap.png`.
+
+- **Thuật toán 2 (Histogram & Median Filter)**:
+  ```powershell
+  python scripts/train_algo2.py
+  ```
+  Xuất cấu hình ngưỡng histogram ra `output/histogram_threshold.json` và biểu đồ 2 đỉnh phân bố ra `output/figures/global_histogram_analysis.png`.
+
