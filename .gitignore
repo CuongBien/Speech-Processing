@@ -45,8 +45,6 @@ desktop.ini
 
 # Output / logs
 *.log
-output/*
-!output/global_threshold.json
-!output/histogram_threshold.json
 results/
+
 
