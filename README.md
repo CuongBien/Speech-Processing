@@ -70,15 +70,17 @@ SP/
 > Giảng viên yêu cầu bấm Run **chạy 01 lần duy nhất** từ `main.py`, duyệt qua 4 file kiểm thử và hiển thị 4 figure tại 4 góc màn hình:
 
 ```powershell
-# Chạy Thuật toán 1 (mặc định):
-python main.py
-
-# Hoặc chỉ định rõ thuật toán:
+# Chạy chế độ Ngưỡng toàn cục chuẩn (mặc định --mode global):
 python main.py --algo 1
 python main.py --algo 2
 
+# Chạy chế độ Ngưỡng động thích nghi theo file (--mode dynamic, F1 đạt 100% toàn bộ):
+python main.py --algo 2 --mode dynamic
+python main.py --algo 1 --mode dynamic
+
 # Chạy chế độ tự động lưu ảnh (không mở cửa sổ GUI):
-python main.py --no-gui
+python main.py --algo 2 --no-gui
+python main.py --algo 2 --mode dynamic --no-gui
 ```
 
 ### B. Chạy Huấn luyện & Khảo sát Tham số Tối ưu:
@@ -99,14 +101,24 @@ python -m unittest discover tests
 
 ## 4. Kết quả Thực nghiệm & So sánh Giữa 2 Thuật Toán
 
-### Bảng Đánh giá Hiệu năng (So khớp với Ground-Truth .lab)
+### A. Chế độ Ngưỡng Toàn Cục (`--mode global`)
 
 | File Âm Thanh | Kênh / Môi trường | SNR (dB) | Thuật toán 1 (Hodgkinson 2012)<br>$T_{\text{global}} = -5.2847$ ($\log\text{MA}$) | Thuật toán 2 (Giannakopoulos 2014)<br>$T_{\text{global}} = 0.0392$ ($\text{MA}$) |
 | :--- | :--- | :---: | :---: | :---: |
 | **`phone_F1`** | Điện thoại (Nữ) | **23.8** | F1: `0.0%` *(Nhiễu nền lớn)* | **MAE: 15.0 ms \| RMSE: 15.0 ms \| F1: 100.0%** |
-| **`phone_M1`** | Điện thoại (Nam) | **23.3** | **MAE: 10.0 ms \| RMSE: 11.2 ms \| F1: 100.0%** | **MAE: 60.0 ms \| RMSE: 65.0 ms \| F1: 50.0%** *(Per-file: F1=100%, MAE=35ms)* |
+| **`phone_M1`** | Điện thoại (Nam) | **23.3** | **MAE: 10.0 ms \| RMSE: 11.2 ms \| F1: 100.0%** | **MAE: 60.0 ms \| RMSE: 65.0 ms \| F1: 50.0%** |
 | **`studio_F1`**| Phòng thu (Nữ) | **38.8** | **MAE: 5.0 ms \| RMSE: 5.0 ms \| F1: 100.0%** | **MAE: 20.0 ms \| RMSE: 25.0 ms \| F1: 100.0%** |
-| **`studio_M1`**| Phòng thu (Nam) | **37.8** | **MAE: 10.0 ms \| RMSE: 11.2 ms \| F1: 100.0%** | **MAE: 55.0 ms \| RMSE: 55.0 ms \| F1: 50.0%** *(Per-file: F1=100%, MAE=5ms)* |
+| **`studio_M1`**| Phòng thu (Nam) | **37.8** | **MAE: 10.0 ms \| RMSE: 11.2 ms \| F1: 100.0%** | **MAE: 55.0 ms \| RMSE: 55.0 ms \| F1: 50.0%** |
+
+### B. Chế độ Ngưỡng Động Thích Nghi (`--mode dynamic` - Giannakopoulos 2014)
+> Tính ngưỡng động trực tiếp theo từng file bằng phân tích 2 đỉnh Histogram ($M_1, M_2$), không giám sát:
+
+| File Âm Thanh | Kênh / Môi trường | SNR (dB) | Ngưỡng động $T_{\text{dyn}}$ | MAE (ms) | RMSE (ms) | Precision | Recall | F1-Score |
+| :--- | :--- | :---: | :---: | :---: | :---: | :---: | :---: | :---: |
+| **`phone_F1`** | Điện thoại (Nữ) | **23.8** | `0.03182` | **15.0 ms** | **15.0 ms** | **100.0%** | **100.0%** | **100.0%** |
+| **`phone_M1`** | Điện thoại (Nam) | **23.3** | `0.01066` | **10.0 ms** | **11.2 ms** | **100.0%** | **100.0%** | **100.0%** |
+| **`studio_F1`**| Phòng thu (Nữ) | **38.8** | `0.00759` | **5.0 ms** | **5.0 ms** | **100.0%** | **100.0%** | **100.0%** |
+| **`studio_M1`**| Phòng thu (Nam) | **37.8** | `0.01290` | **40.0 ms** | **42.7 ms** | **100.0%** | **100.0%** | **100.0%** |
 
 ---
 

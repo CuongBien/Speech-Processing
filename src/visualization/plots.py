@@ -28,11 +28,14 @@ def plot_single_file_result(
     metrics: Optional[Dict[str, Any]] = None,
     save_path: Optional[str] = None,
     fig_num: int = 1,
+    corner_label: str = "",
+    snr_db: Optional[float] = None,
 ) -> plt.Figure:
     """
     Vẽ kết quả phân đoạn cho 1 file tín hiệu gồm 2 subplot:
     - Subplot 1: Dạng sóng tín hiệu gốc + ranh giới GT (đỏ) + ranh giới dự đoán (xanh).
     - Subplot 2: Đường đặc trưng ngắn hạn + ngưỡng T (xanh lá) + ranh giới.
+    - Cập nhật Window Title thể hiện góc màn hình, tên file, SNR, MAE và F1.
     """
     total_time_s = len(signal) / sample_rate
     time_axis = np.linspace(0.0, total_time_s, len(signal), endpoint=False)
@@ -46,13 +49,26 @@ def plot_single_file_result(
     ax_wave.plot(time_axis, signal, color="#2c3e50", linewidth=0.6, alpha=0.85, label="Waveform")
     ax_wave.set_ylabel("Biên độ (Amplitude)", fontsize=10, fontweight="bold")
 
+    snr_str = f" | SNR: {snr_db:.1f} dB" if snr_db is not None else ""
     if metrics:
         mae_str = f"{metrics.get('mae_ms', float('nan')):.1f} ms"
         rmse_str = f"{metrics.get('rmse_ms', float('nan')):.1f} ms"
         f1_str = f"{metrics.get('f1_score', 0.0) * 100:.1f}%"
-        main_title = f"{title_text} | MAE: {mae_str} | RMSE: {rmse_str} | F1: {f1_str}"
+        main_title = f"{title_text}{snr_str} | MAE: {mae_str} | RMSE: {rmse_str} | F1: {f1_str}"
+        prefix = f"{corner_label} " if corner_label else ""
+        window_title = f"{prefix}{title_text}{snr_str} | MAE: {mae_str} | F1: {f1_str}".strip()
     else:
-        main_title = f"{title_text} - Phân đoạn Tiếng nói / Khoảng lặng"
+        main_title = f"{title_text}{snr_str} - Phân đoạn Tiếng nói / Khoảng lặng"
+        prefix = f"{corner_label} " if corner_label else ""
+        window_title = f"{prefix}{title_text}{snr_str}".strip()
+
+    # Đặt tiêu đề cửa sổ hệ điều hành (Window Title)
+    if hasattr(fig.canvas, "manager") and fig.canvas.manager is not None:
+        if hasattr(fig.canvas.manager, "set_window_title"):
+            try:
+                fig.canvas.manager.set_window_title(window_title)
+            except Exception:
+                pass
 
     ax_wave.set_title(main_title, fontsize=11, fontweight="bold", pad=8)
     ax_wave.grid(True, linestyle=":", alpha=0.6)

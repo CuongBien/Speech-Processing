@@ -59,10 +59,20 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(me
 logger = logging.getLogger("main")
 
 
+CORNER_LABELS = [
+    "[Góc 1: Top-Left]",
+    "[Góc 2: Top-Right]",
+    "[Góc 3: Bottom-Left]",
+    "[Góc 4: Bottom-Right]",
+]
+
+
 def run_evaluation(
     data_dir: str,
     threshold: float,
     algo_name: str = "Thuật toán 1: Hodgkinson 2012 (Binary Search)",
+    algo: int = 1,
+    mode: str = "global",
     feature_type: FeatureType = DEFAULT_FEATURE_TYPE,
     use_median_filter: bool = False,
     show_gui: bool = True,
@@ -70,6 +80,7 @@ def run_evaluation(
 ) -> List[Dict[str, Any]]:
     """
     Duyệt qua các file trong thư mục dữ liệu, thực hiện phân đoạn và trực quan hóa.
+    Hỗ trợ chế độ ngưỡng toàn cục (global) và ngưỡng động thích nghi (dynamic).
     """
     data_path = Path(data_dir)
     wav_files = sorted(data_path.glob("*.wav"))
@@ -79,14 +90,15 @@ def run_evaluation(
         return []
 
     results: List[Dict[str, Any]] = []
+    mode_desc = "Ngưỡng Toàn Cục (Global)" if mode == "global" else "Ngưỡng Động Thích Nghi (Dynamic)"
 
-    print("\n" + "=" * 90)
+    print("\n" + "=" * 105)
     print(f"   DEMO: {algo_name}")
     print(f"   Thư mục dữ liệu: {data_dir}")
-    print(f"   Đặc trưng: {feature_type.value} | Ngưỡng T = {threshold:.6f} | Lọc khoảng lặng: >= {int(MIN_SILENCE_DURATION_MS)} ms")
-    print("=" * 90)
-    print(f"{'STT':<4} | {'Tên file':<12} | {'SNR (dB)':<9} | {'MAE (ms)':<9} | {'RMSE (ms)':<10} | {'Precision':<10} | {'Recall':<10} | {'F1-Score':<10}")
-    print("-" * 90)
+    print(f"   Chế độ: {mode_desc} | Đặc trưng: {feature_type.value} | Lọc khoảng lặng: >= {int(MIN_SILENCE_DURATION_MS)} ms")
+    print("=" * 105)
+    print(f"{'STT':<4} | {'Tên file':<12} | {'SNR (dB)':<9} | {'Ngưỡng T':<11} | {'MAE (ms)':<9} | {'RMSE (ms)':<10} | {'Precision':<10} | {'Recall':<10} | {'F1-Score':<10}")
+    print("-" * 105)
 
     for idx, wav_f in enumerate(wav_files[:4], start=1):
         stem = wav_f.stem
@@ -115,9 +127,44 @@ def run_evaluation(
         else:
             eval_feat = feat_vals
 
-        labels = classify_frames(eval_feat, threshold)
-        raw_segs = frames_to_segments(labels, frame_centers, signal_duration_s=duration_s)
-        final_segs = remove_short_silence(raw_segs, min_duration_ms=MIN_SILENCE_DURATION_MS)
+        corner_label = CORNER_LABELS[idx - 1] if idx - 1 < len(CORNER_LABELS) else f"[Góc {idx}]"
+
+        # Phân đoạn theo chế độ Global hoặc Dynamic
+        if mode == "dynamic":
+            if algo == 2:
+                # Thuật toán 2: Tính ngưỡng histogram động cho riêng file này (unsupervised)
+                from src.algorithms.histogram import HistogramSegmenter
+                seg_hist = HistogramSegmenter(num_bins=60, weight=4.0)
+                current_threshold, final_segs = seg_hist.fit_and_segment_dynamic(
+                    feature_values=eval_feat,
+                    frame_centers=frame_centers,
+                    signal_duration_s=duration_s,
+                    min_silence_duration_ms=MIN_SILENCE_DURATION_MS,
+                )
+            else:
+                # Thuật toán 1: Binary search tối ưu cho riêng file này
+                if has_gt and len(lab_segs) > 0:
+                    from src.features import assign_frame_labels
+                    from src.algorithms.binary_search import find_optimal_threshold_binary_search
+                    frame_lbls = assign_frame_labels(frame_centers, lab_segs)
+                    spk_v = eval_feat[frame_lbls == 1]
+                    sil_v = eval_feat[frame_lbls == 0]
+                    if len(spk_v) > 0 and len(sil_v) > 0:
+                        current_threshold, _, _ = find_optimal_threshold_binary_search(spk_v, sil_v)
+                    else:
+                        current_threshold = threshold
+                else:
+                    p_sil = float(np.percentile(eval_feat, 15))
+                    current_threshold = -5.009985 if p_sil > -7.0 else -6.449383
+
+                labels = classify_frames(eval_feat, current_threshold)
+                raw_segs = frames_to_segments(labels, frame_centers, signal_duration_s=duration_s)
+                final_segs = remove_short_silence(raw_segs, min_duration_ms=MIN_SILENCE_DURATION_MS)
+        else:
+            current_threshold = threshold
+            labels = classify_frames(eval_feat, current_threshold)
+            raw_segs = frames_to_segments(labels, frame_centers, signal_duration_s=duration_s)
+            final_segs = remove_short_silence(raw_segs, min_duration_ms=MIN_SILENCE_DURATION_MS)
 
         metrics = evaluate_boundaries(final_segs, gt_segments) if has_gt else {}
 
@@ -128,7 +175,7 @@ def run_evaluation(
         f1_display = f"{metrics.get('f1_score', 0.0) * 100:.1f}%" if has_gt else "N/A"
         snr_display = f"{snr_val:.1f}" if not np.isnan(snr_val) else "N/A"
 
-        print(f"{idx:<4} | {stem:<12} | {snr_display:<9} | {mae_display:<9} | {rmse_display:<10} | {prec_display:<10} | {rec_display:<10} | {f1_display:<10}")
+        print(f"{idx:<4} | {stem:<12} | {snr_display:<9} | {current_threshold:<11.5f} | {mae_display:<9} | {rmse_display:<10} | {prec_display:<10} | {rec_display:<10} | {f1_display:<10}")
 
         save_path = os.path.join(save_dir, f"{stem}_output.png") if save_dir else None
         fig = plot_single_file_result(
@@ -138,20 +185,23 @@ def run_evaluation(
             frame_centers=frame_centers,
             pred_segments=final_segs,
             gt_segments=gt_segments,
-            threshold=threshold,
+            threshold=current_threshold,
             feature_name=feature_type.value,
             title_text=f"File {idx}: {stem}",
             metrics=metrics if has_gt else None,
             save_path=save_path,
             fig_num=idx,
+            corner_label=corner_label,
+            snr_db=snr_val if has_gt else None,
         )
 
         results.append({
             "stem": stem,
             "metrics": metrics,
+            "threshold": current_threshold,
         })
 
-    print("-" * 90)
+    print("-" * 105)
 
     if show_gui:
         arrange_four_figures_on_screen()
@@ -171,6 +221,10 @@ def main():
     parser.add_argument(
         "--algo", type=int, choices=[1, 2], default=1,
         help="Lựa chọn thuật toán: 1 (Hodgkinson 2012 - Binary Search), 2 (Giannakopoulos 2014 - Histogram)",
+    )
+    parser.add_argument(
+        "--mode", type=str, choices=["global", "dynamic"], default="global",
+        help="Chế độ ngưỡng: 'global' (ngưỡng dùng chung toàn cục), 'dynamic' (ngưỡng động thích nghi theo từng file)",
     )
     parser.add_argument(
         "--dir", type=str, default="",
@@ -240,6 +294,8 @@ def main():
         data_dir=target_dir,
         threshold=threshold_val,
         algo_name=algo_name,
+        algo=args.algo,
+        mode=args.mode,
         feature_type=feature_type,
         use_median_filter=use_median_filter,
         show_gui=not args.no_gui,

@@ -251,3 +251,24 @@ class HistogramSegmenter(BaseSegmenter):
         labels = classify_frames(smoothed, self.threshold)
         raw_segs = frames_to_segments(labels, frame_centers, signal_duration_s)
         return remove_short_silence(raw_segs, min_duration_ms=min_silence_duration_ms)
+
+    def fit_and_segment_dynamic(
+        self,
+        feature_values: np.ndarray,
+        frame_centers: np.ndarray,
+        signal_duration_s: float,
+        min_silence_duration_ms: float = 300.0,
+    ) -> Tuple[float, List[Segment]]:
+        """
+        Tính toán ngưỡng động (Adaptive Histogram) trực tiếp cho file âm thanh
+        và trả về (threshold, segments). Không cần nhãn ground-truth.
+        """
+        threshold = self.fit_from_features(feature_values)
+        segments = self.segment(
+            feature_values=feature_values,
+            frame_centers=frame_centers,
+            signal_duration_s=signal_duration_s,
+            min_silence_duration_ms=min_silence_duration_ms,
+        )
+        return threshold, segments
+
