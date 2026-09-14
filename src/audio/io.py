@@ -1,5 +1,5 @@
 """
-src/audio_io.py – Module đọc/ghi file âm thanh WAV và file nhãn chuẩn .lab.
+src/audio/io.py – Module đọc/ghi file âm thanh WAV và phân tích file nhãn .lab.
 Tuân thủ quy chuẩn tự xử lý trên numpy, có chú thích đầy đủ cho từng hàm
 và từng khối mã lệnh.
 """
@@ -23,14 +23,11 @@ def load_audio(wav_path: str) -> Tuple[np.ndarray, int]:
     Đọc file âm thanh WAV và chuẩn hóa về dạng mono mảng float32 trong khoảng [-1.0, 1.0].
 
     Tham số:
-        wav_path (str): Đường dẫn tuyệt đối hoặc tương đối tới file .wav.
+        wav_path (str): Đường dẫn tới file .wav.
 
     Trả về:
-        Tuple[np.ndarray, int]:
-            - signal (np.ndarray): Tín hiệu âm thanh 1 chiều kiểu float32.
-            - sample_rate (int): Tần số lấy mẫu (Hz).
+        Tuple[np.ndarray, int]: (signal mảng 1D float32, sample_rate Hz).
     """
-    # Kiểm tra sự tồn tại của file âm thanh
     if not os.path.exists(wav_path):
         raise FileNotFoundError(f"Không tìm thấy file âm thanh: {wav_path}")
 
@@ -38,7 +35,6 @@ def load_audio(wav_path: str) -> Tuple[np.ndarray, int]:
     sample_rate, raw_data = wavfile.read(wav_path)
 
     # Chuẩn hóa kiểu dữ liệu nguyên thành float32 trong đoạn [-1.0, 1.0]
-    # Dựa vào số bit mã hóa (int16, int32 hoặc uint8)
     if raw_data.dtype == np.int16:
         signal = raw_data.astype(np.float32) / 32768.0
     elif raw_data.dtype == np.int32:
@@ -87,13 +83,11 @@ def parse_lab_file(lab_path: str) -> List[LabSegment]:
             if not parts:
                 continue
 
-            # Bỏ qua các thông số F0mean và F0std ở cuối file
+            # Bỏ qua metadata ở cuối file
             if parts[0].lower() in ignore_keys:
                 continue
 
-            # Kiểm tra đủ 3 trường: start, end, label
             if len(parts) < 3:
-                # Thử tách theo khoảng trắng nếu không có ký tự tab
                 parts = line_clean.split()
                 if len(parts) < 3:
                     logger.warning("Bỏ qua dòng không đúng định dạng tại dòng %d: %s", line_num, line_clean)
@@ -129,7 +123,6 @@ def load_ground_truth(lab_segments: List[LabSegment]) -> List[Segment]:
     if not lab_segments:
         return []
 
-    # Ánh xạ nhãn: sil -> silence; v, uv -> speech
     def map_to_binary(label: str) -> str:
         return "silence" if label == "sil" else "speech"
 
@@ -155,13 +148,7 @@ def load_ground_truth(lab_segments: List[LabSegment]) -> List[Segment]:
 
 
 def save_threshold_json(threshold_data: Dict[str, Any], json_path: str):
-    """
-    Lưu thông tin cấu hình ngưỡng tối ưu ra file định dạng JSON.
-
-    Tham số:
-        threshold_data (Dict[str, Any]): Từ điển chứa thông tin ngưỡng.
-        json_path (str): Đường dẫn file JSON đích.
-    """
+    """Lưu cấu hình ngưỡng tối ưu ra file JSON."""
     os.makedirs(os.path.dirname(json_path), exist_ok=True)
     with open(json_path, "w", encoding="utf-8") as f:
         json.dump(threshold_data, f, indent=4, ensure_ascii=False)
@@ -169,15 +156,7 @@ def save_threshold_json(threshold_data: Dict[str, Any], json_path: str):
 
 
 def load_threshold_json(json_path: str) -> Dict[str, Any]:
-    """
-    Đọc thông tin cấu hình ngưỡng tối ưu từ file JSON.
-
-    Tham số:
-        json_path (str): Đường dẫn file JSON.
-
-    Trả về:
-        Dict[str, Any]: Từ điển chứa thông tin ngưỡng.
-    """
+    """Đọc cấu hình ngưỡng tối ưu từ file JSON."""
     if not os.path.exists(json_path):
         raise FileNotFoundError(f"Không tìm thấy file cấu hình ngưỡng: {json_path}")
     with open(json_path, "r", encoding="utf-8") as f:

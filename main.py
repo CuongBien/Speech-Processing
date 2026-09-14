@@ -1,13 +1,13 @@
 """
 main.py – Điểm khởi chạy chính (Entry Point) của đồ án Xử lý tín hiệu tiếng nói.
-Thuật toán 1: Phân đoạn Tiếng nói / Khoảng lặng bằng Năng lượng ngắn hạn & Tìm kiếm nhị phân (Hodgkinson 2012).
+Hỗ trợ cả 2 thuật toán:
+- Thuật toán 1: Năng lượng ngắn hạn kết hợp Tìm kiếm nhị phân (Hodgkinson 2012)
+- Thuật toán 2: Phân đoạn dựa trên Histogram (Giannakopoulos 2014)
 
-Quy cách chạy theo hướng dẫn của Giảng viên:
+Quy cách theo hướng dẫn của Giảng viên:
 - Bấm Run chạy 01 lần duy nhất từ file main.py.
-- Duyệt qua 4 file tín hiệu kiểm thử (trong TinHieuKiemThu nếu có, hoặc TinHieuHuanLuyen để demo).
-- Xuất ra 4 cửa sổ figure tương ứng với 4 file tín hiệu, tự động định vị tại 4 góc màn hình.
-- Mỗi figure gồm kết quả trung gian (dạng sóng, hàm năng lượng ngắn hạn) và kết quả cuối cùng (biên đỏ GT, biên xanh thuật toán).
-- In bảng tổng kết chỉ số định lượng MAE, RMSE (đơn vị ms) và F1-Score ra terminal.
+- Duyệt qua 4 file kiểm thử và hiển thị 4 figure tại 4 góc màn hình.
+- Xuất bảng tổng kết chỉ số định lượng MAE, RMSE (đơn vị ms) và F1-Score ra terminal.
 """
 
 import argparse
@@ -24,18 +24,17 @@ if hasattr(sys.stdout, "reconfigure"):
 if hasattr(sys.stderr, "reconfigure"):
     sys.stderr.reconfigure(encoding="utf-8", errors="replace")
 
-import matplotlib.pyplot as plt
-import numpy as np
-
-# Bỏ qua cảnh báo phụ không cần thiết từ scipy.io.wavfile
 warnings.filterwarnings("ignore", category=UserWarning)
 
-# Thiết lập đường dẫn module
 CURRENT_DIR = Path(__file__).resolve().parent
 sys.path.insert(0, str(CURRENT_DIR))
 
-from src.audio_io import (
-    load_audio, load_ground_truth, load_threshold_json, parse_lab_file,
+import matplotlib.pyplot as plt
+import numpy as np
+
+from src.audio import (
+    compute_snr_db, load_audio, load_ground_truth, load_threshold_json,
+    parse_lab_file,
 )
 from src.config import (
     DEFAULT_FEATURE_TYPE, FIGURES_DIR, FRAME_LENGTH_MS,
@@ -43,14 +42,17 @@ from src.config import (
     TRAINING_DIR, FeatureType, Segment,
 )
 from src.features import (
-    compute_short_time_feature, compute_snr_db,
+    compute_short_time_feature,
 )
-from src.plotting import (
-    arrange_four_figures_on_screen, plot_single_file_result,
+from src.algorithms import (
+    BinarySearchSegmenter, HistogramSegmenter,
 )
 from src.segmentation import (
     classify_frames, evaluate_boundaries, frames_to_segments,
     remove_short_silence,
+)
+from src.visualization import (
+    arrange_four_figures_on_screen, plot_single_file_result,
 )
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
@@ -60,20 +62,12 @@ logger = logging.getLogger("main")
 def run_evaluation(
     data_dir: str,
     threshold: float,
+    algo_name: str = "Thuật toán 1: Hodgkinson 2012 (Binary Search)",
     show_gui: bool = True,
     save_dir: str = "",
 ) -> List[Dict[str, Any]]:
     """
     Duyệt qua các file trong thư mục dữ liệu, thực hiện phân đoạn và trực quan hóa.
-
-    Tham số:
-        data_dir (str): Thư mục chứa các file .wav và .lab.
-        threshold (float): Ngưỡng phân biệt tối ưu T.
-        show_gui (bool): Hiển thị 4 cửa sổ figure trên màn hình.
-        save_dir (str): Thư mục lưu file ảnh kết quả.
-
-    Trả về:
-        List[Dict[str, Any]]: Danh sách kết quả định lượng của từng file.
     """
     data_path = Path(data_dir)
     wav_files = sorted(data_path.glob("*.wav"))
@@ -85,7 +79,7 @@ def run_evaluation(
     results: List[Dict[str, Any]] = []
 
     print("\n" + "=" * 90)
-    print(f"   DEMO THUẬT TOÁN 1: HODGKINSON 2012 (BINARY SEARCH THRESHOLDING)")
+    print(f"   DEMO: {algo_name}")
     print(f"   Thư mục dữ liệu: {data_dir}")
     print(f"   Đặc trưng: {DEFAULT_FEATURE_TYPE.value} | Ngưỡng T = {threshold:.6f} | Lọc khoảng lặng: >= {int(MIN_SILENCE_DURATION_MS)} ms")
     print("=" * 90)
@@ -96,17 +90,14 @@ def run_evaluation(
         stem = wav_f.stem
         lab_f = wav_f.with_suffix(".lab")
 
-        # 1. Đọc tín hiệu âm thanh
         signal, sr = load_audio(str(wav_f))
         duration_s = len(signal) / sr
 
-        # 2. Đọc file nhãn nếu có (dùng để đánh giá sai số MAE/RMSE)
         has_gt = lab_f.exists()
         lab_segs = parse_lab_file(str(lab_f)) if has_gt else []
         gt_segments = load_ground_truth(lab_segs) if has_gt else []
         snr_val = compute_snr_db(signal, sr, lab_segs) if has_gt else float("nan")
 
-        # 3. Tính toán hàm đặc trưng ngắn hạn
         feat_vals, frame_centers = compute_short_time_feature(
             signal=signal,
             sample_rate=sr,
@@ -115,14 +106,10 @@ def run_evaluation(
             feature_type=DEFAULT_FEATURE_TYPE,
         )
 
-        # 4. Phân loại khung theo ngưỡng T
         labels = classify_frames(feat_vals, threshold)
         raw_segs = frames_to_segments(labels, frame_centers, signal_duration_s=duration_s)
-
-        # 5. Loại bỏ khoảng lặng ngắn < 300ms theo đúng yêu cầu đề tài
         final_segs = remove_short_silence(raw_segs, min_duration_ms=MIN_SILENCE_DURATION_MS)
 
-        # 6. Đánh giá sai số định lượng so với Ground Truth
         metrics = evaluate_boundaries(final_segs, gt_segments) if has_gt else {}
 
         mae_display = f"{metrics.get('mae_ms', float('nan')):.1f}" if not np.isnan(metrics.get('mae_ms', float('nan'))) else "N/A"
@@ -134,7 +121,6 @@ def run_evaluation(
 
         print(f"{idx:<4} | {stem:<12} | {snr_display:<9} | {mae_display:<9} | {rmse_display:<10} | {prec_display:<10} | {rec_display:<10} | {f1_display:<10}")
 
-        # 7. Xuất figure cho file này
         save_path = os.path.join(save_dir, f"{stem}_output.png") if save_dir else None
         fig = plot_single_file_result(
             signal=signal,
@@ -158,7 +144,6 @@ def run_evaluation(
 
     print("-" * 90)
 
-    # 8. Sắp xếp 4 figure vào 4 góc màn hình
     if show_gui:
         arrange_four_figures_on_screen()
         print("\n[+] Đang hiển thị 4 figure tại 4 góc màn hình. Đóng các cửa sổ để kết thúc chương trình.")
@@ -170,21 +155,25 @@ def run_evaluation(
 
 
 def main():
-    """Hàm main xử lý đối số dòng lệnh và khởi chạy kiểm thử."""
+    """Hàm main điều khiển đối số dòng lệnh và khởi chạy phân đoạn."""
     parser = argparse.ArgumentParser(
-        description="Phân đoạn tín hiệu tiếng nói và khoảng lặng (Thuật toán 1: Hodgkinson 2012)"
+        description="Phân đoạn tín hiệu tiếng nói và khoảng lặng (Speech / Silence Discrimination)"
+    )
+    parser.add_argument(
+        "--algo", type=int, choices=[1, 2], default=1,
+        help="Lựa chọn thuật toán: 1 (Hodgkinson 2012 - Binary Search), 2 (Giannakopoulos 2014 - Histogram)",
     )
     parser.add_argument(
         "--dir", type=str, default="",
-        help="Đường dẫn thư mục chứa các file .wav cần phân đoạn (mặc định kiểm tra TinHieuKiemThu, nếu không có sẽ dùng TinHieuHuanLuyen)",
+        help="Đường dẫn thư mục chứa các file .wav (mặc định ưu tiên TinHieuKiemThu, nếu không có sẽ dùng TinHieuHuanLuyen)",
     )
     parser.add_argument(
         "--threshold", type=float, default=None,
-        help="Ngưỡng T chỉ định thủ công (nếu không cung cấp sẽ nạp từ output/global_threshold.json)",
+        help="Ngưỡng T chỉ định thủ công (nếu không cung cấp sẽ nạp từ file cấu hình tối ưu)",
     )
     parser.add_argument(
         "--no-gui", action="store_true",
-        help="Tắt chế độ hiển thị cửa sổ figure (dùng khi chạy tự động hoặc không có màn hình GUI)",
+        help="Tắt chế độ hiển thị cửa sổ figure (chạy headless/lưu ảnh)",
     )
     parser.add_argument(
         "--save-dir", type=str, default="",
@@ -197,7 +186,6 @@ def main():
     if not target_dir:
         test_p = Path(TEST_DIR)
         train_p = Path(TRAINING_DIR)
-        # Nếu thư mục TinHieuKiemThu có chứa file wav thì ưu tiên chạy test
         if test_p.exists() and list(test_p.glob("*.wav")):
             target_dir = str(test_p)
             logger.info("Phát hiện thư mục kiểm thử: %s", target_dir)
@@ -208,32 +196,35 @@ def main():
             logger.error("Không tìm thấy dữ liệu âm thanh tại %s hoặc %s", TEST_DIR, TRAINING_DIR)
             return
 
-    # 2. Xác định ngưỡng tối ưu T
+    # 2. Xác định thuật toán và ngưỡng T tương ứng
+    if args.algo == 1:
+        algo_name = "Thuật toán 1: Hodgkinson 2012 (Binary Search)"
+        cfg_file = os.path.join(OUTPUT_DIR, "global_threshold.json")
+    else:
+        algo_name = "Thuật toán 2: Giannakopoulos 2014 (Histogram)"
+        cfg_file = os.path.join(OUTPUT_DIR, "histogram_threshold.json")
+
     threshold_val = args.threshold
     if threshold_val is None:
-        cfg_file = os.path.join(OUTPUT_DIR, "global_threshold.json")
         if os.path.exists(cfg_file):
             try:
                 cfg = load_threshold_json(cfg_file)
                 threshold_val = float(cfg.get("global_threshold", -5.284692))
-                logger.info("Đã nạp ngưỡng tối ưu từ file cấu hình: T = %.6f", threshold_val)
+                logger.info("Đã nạp ngưỡng tối ưu từ file cấu hình %s: T = %.6f", cfg_file, threshold_val)
             except Exception as e:
-                logger.warning("Không đọc được cấu hình ngưỡng từ %s (%s). Dùng mặc định.", cfg_file, e)
+                logger.warning("Không đọc được cấu hình từ %s (%s). Dùng mặc định.", cfg_file, e)
                 threshold_val = -5.284692
         else:
-            # Ngưỡng tối ưu tính sẵn từ quá trình huấn luyện 4 file
             threshold_val = -5.284692
-            logger.info("Chưa có file cấu hình. Sử dụng ngưỡng tối ưu tính sẵn: T = %.6f", threshold_val)
+            logger.info("Sử dụng ngưỡng tối ưu mặc định: T = %.6f", threshold_val)
 
-    # 3. Thư mục lưu ảnh
-    save_dir = args.save_dir
-    if not save_dir:
-        save_dir = os.path.join(OUTPUT_DIR, "figures")
+    save_dir = args.save_dir if args.save_dir else os.path.join(OUTPUT_DIR, "figures")
 
-    # 4. Thực thi phân đoạn và hiển thị kết quả
+    # 3. Thực thi đánh giá
     run_evaluation(
         data_dir=target_dir,
         threshold=threshold_val,
+        algo_name=algo_name,
         show_gui=not args.no_gui,
         save_dir=save_dir,
     )

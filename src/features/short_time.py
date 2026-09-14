@@ -1,7 +1,7 @@
 """
-src/features.py – Trích xuất đặc trưng ngắn hạn và gán nhãn khung thời gian.
+src/features/short_time.py – Trích xuất đặc trưng ngắn hạn và gán nhãn khung thời gian.
 Tự cài đặt các phép toán trên Numpy thuần (không dùng toolbox ngoài).
-Bao gồm tính STE, MA, logMA, logSTE, gán nhãn Ground Truth và ước tính tỉ số tín hiệu trên nhiễu (SNR).
+Bao gồm tính MA, logMA, STE, logSTE và gán nhãn Ground Truth cho từng khung.
 """
 
 import logging
@@ -42,7 +42,6 @@ def compute_short_time_feature(
             - feature_values (np.ndarray): Mảng giá trị đặc trưng ngắn hạn theo từng khung.
             - frame_centers (np.ndarray): Mốc thời gian trung tâm của mỗi khung (tính bằng giây).
     """
-    # Tính số mẫu (samples) trong một khung và bước nhảy giữa 2 khung kề nhau
     frame_len_samples = int(sample_rate * frame_length_ms / 1000)
     frame_step_samples = int(sample_rate * frame_shift_ms / 1000)
 
@@ -54,7 +53,6 @@ def compute_short_time_feature(
         logger.warning("Độ dài tín hiệu ngắn hơn một khung đơn lẻ.")
         return np.array([]), np.array([])
 
-    # Xác định tổng số khung có thể tạo ra
     num_frames = 1 + (num_samples - frame_len_samples) // frame_step_samples
     feature_values = np.empty(num_frames, dtype=np.float64)
     frame_centers = np.empty(num_frames, dtype=np.float64)
@@ -65,20 +63,17 @@ def compute_short_time_feature(
         end_idx = start_idx + frame_len_samples
         frame = signal[start_idx:end_idx]
 
-        # Tính độ lớn ngắn hạn (MA) hoặc năng lượng ngắn hạn (STE)
         if feature_type in (FeatureType.MA, FeatureType.LOG_MA):
-            # Biên độ trung bình của khung: MA = mean(|x|)
+            # Độ lớn ngắn hạn: MA = mean(|x|)
             val = float(np.mean(np.abs(frame)))
         else:
-            # Năng lượng trung bình của khung: STE = mean(x^2)
+            # Năng lượng ngắn hạn: STE = mean(x^2)
             val = float(np.mean(frame.astype(np.float64) ** 2))
 
-        # Áp dụng hàm log nếu chọn logMA hoặc logSTE
         if feature_type in (FeatureType.LOG_MA, FeatureType.LOG_STE):
             val = float(np.log(val + log_epsilon))
 
         feature_values[i] = val
-        # Điểm mốc thời gian tại tâm của khung (giây)
         frame_centers[i] = (start_idx + frame_len_samples / 2.0) / sample_rate
 
     return feature_values, frame_centers
@@ -98,71 +93,14 @@ def assign_frame_labels(
     Trả về:
         np.ndarray: Mảng nhãn nhị phân: 1 (tiếng nói - speech), 0 (khoảng lặng - silence).
     """
-    # Khởi tạo nhãn mặc định là -1 (chưa gán)
     labels = np.full(len(frame_centers), -1, dtype=np.int32)
 
-    # Duyệt qua từng đoạn trong file .lab để gán nhãn
     for seg in lab_segments:
-        # Khung có tâm nằm trong khoảng nửa mở [start, end) được gán nhãn của đoạn đó
         mask = (frame_centers >= seg.start) & (frame_centers < seg.end)
         if seg.is_silence():
             labels[mask] = 0
         else:
             labels[mask] = 1
 
-    # Nếu có khung ở ngoài cùng chưa thuộc đoạn nào, gán về khoảng lặng
     labels[labels == -1] = 0
     return labels
-
-
-def compute_snr_db(
-    signal: np.ndarray,
-    sample_rate: int,
-    lab_segments: List[LabSegment],
-) -> float:
-    """
-    Ước tính tỉ số tín hiệu trên nhiễu (Signal-to-Noise Ratio - SNR) theo thang dB
-    dựa vào năng lượng trung bình tại các vùng tiếng nói và vùng khoảng lặng.
-
-    Công thức:
-        P_speech = mean(x^2 [speech])
-        P_noise  = mean(x^2 [silence])
-        SNR (dB) = 10 * log10(P_speech / (P_noise + eps))
-
-    Tham số:
-        signal (np.ndarray): Mảng mẫu tín hiệu âm thanh đã chuẩn hóa.
-        sample_rate (int): Tần số lấy mẫu (Hz).
-        lab_segments (List[LabSegment]): Danh sách các đoạn chuẩn.
-
-    Trả về:
-        float: Giá trị SNR đo bằng dB.
-    """
-    speech_samples: List[np.ndarray] = []
-    silence_samples: List[np.ndarray] = []
-
-    # Thu thập các mẫu âm thanh tương ứng từng vùng
-    for seg in lab_segments:
-        s_idx = int(seg.start * sample_rate)
-        e_idx = min(int(seg.end * sample_rate), len(signal))
-        if s_idx < e_idx:
-            chunk = signal[s_idx:e_idx]
-            if seg.is_silence():
-                silence_samples.append(chunk)
-            else:
-                speech_samples.append(chunk)
-
-    if not speech_samples or not silence_samples:
-        return 0.0
-
-    # Ghép các mẫu và tính công suất trung bình
-    all_speech = np.concatenate(speech_samples)
-    all_silence = np.concatenate(silence_samples)
-
-    power_speech = float(np.mean(all_speech.astype(np.float64) ** 2))
-    power_noise = float(np.mean(all_silence.astype(np.float64) ** 2))
-
-    if power_noise <= 1e-12:
-        return 100.0
-
-    snr_db = 10.0 * np.log10((power_speech + 1e-12) / (power_noise + 1e-12))
-    return float(snr_db)
